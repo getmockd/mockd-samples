@@ -1,0 +1,127 @@
+# OpenAI API Mock — Tables + Extend Architecture
+# Usage: mockd start -c mockd.yaml --no-auth
+#
+# Imports OpenAI's OpenAPI spec for 237 schema-generated endpoints,
+# then layers stateful tables on top for core resources.
+#
+# Features:
+#   - 237 schema-generated endpoints from OpenAI's OpenAPI spec
+#   - 3 stateful data tables: models (seeded), assistants, threads
+#   - Extend bindings wire imported mocks to table CRUD
+#   - Prefix IDs (asst_, thread_)
+#   - OpenAI list envelope: {"object":"list","data":[...],"has_more":false}
+
+version: "1.0"
+
+imports:
+  - path: openai.yaml
+    as: openai
+
+# Shared OpenAI error format
+x-openai-errors: &openai-errors
+  wrap: error
+  fields:
+    message: message
+    type: type
+    code: code
+  typeMap:
+    NOT_FOUND: invalid_request_error
+    VALIDATION_ERROR: invalid_request_error
+    INTERNAL_ERROR: server_error
+
+# ============================================================================
+# Tables — pure data stores, no routing
+# ============================================================================
+tables:
+  - name: models
+    idField: id
+    seedData:
+      - { id: "gpt-4o", object: "model", created: 1715367049, owned_by: "system" }
+      - { id: "gpt-4o-mini", object: "model", created: 1721172741, owned_by: "system" }
+      - { id: "gpt-3.5-turbo", object: "model", created: 1677610602, owned_by: "openai" }
+    response: &models-response
+      fields:
+        inject:
+          object: model
+        hide:
+          - createdAt
+          - updatedAt
+      list:
+        dataField: data
+        extraFields:
+          object: list
+        hideMeta: true
+      errors: *openai-errors
+
+  - name: assistants
+    idField: id
+    idStrategy: prefix
+    idPrefix: "asst_"
+    response: &assistants-response
+      timestamps:
+        format: unix
+        fields:
+          createdAt: created_at
+      fields:
+        inject:
+          object: assistant
+        hide:
+          - updatedAt
+      list:
+        dataField: data
+        extraFields:
+          object: list
+          has_more: false
+        hideMeta: true
+      delete:
+        status: 200
+        preserve: true
+        body:
+          id: "{{item.id}}"
+          object: assistant.deleted
+          deleted: true
+      errors: *openai-errors
+
+  - name: threads
+    idField: id
+    idStrategy: prefix
+    idPrefix: "thread_"
+    response: &threads-response
+      timestamps:
+        format: unix
+        fields:
+          createdAt: created_at
+      fields:
+        inject:
+          object: thread
+        hide:
+          - updatedAt
+      delete:
+        status: 200
+        preserve: true
+        body:
+          id: "{{item.id}}"
+          object: thread.deleted
+          deleted: true
+      errors: *openai-errors
+
+# ============================================================================
+# Extend — bind imported mocks to tables
+# ============================================================================
+extend:
+  # Models (read-only — no create/update/delete for models)
+  - { mock: openai.listModels,    table: models, action: list }
+  - { mock: openai.retrieveModel, table: models, action: get }
+
+  # Assistants (full CRUD)
+  - { mock: openai.createAssistant, table: assistants, action: create }
+  - { mock: openai.listAssistants,  table: assistants, action: list }
+  - { mock: openai.getAssistant,    table: assistants, action: get }
+  - { mock: openai.modifyAssistant, table: assistants, action: patch }
+  - { mock: openai.deleteAssistant, table: assistants, action: delete }
+
+  # Threads (create/get/update/delete — no list in OpenAI's API)
+  - { mock: openai.createThread, table: threads, action: create }
+  - { mock: openai.getThread,    table: threads, action: get }
+  - { mock: openai.modifyThread, table: threads, action: patch }
+  - { mock: openai.deleteThread, table: threads, action: delete }

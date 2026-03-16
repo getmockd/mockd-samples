@@ -283,7 +283,6 @@ stripe-api/
 ├── setup.sh             ← Downloads spec + starts mockd with config
 ├── test.sh              ← Regression tests (run to verify everything works)
 ├── mockd.yaml           ← Curated config: 8 stateful tables with Stripe response transforms
-├── mockd-full.yaml      ← Full digital twin: 178 tables, 543 extend bindings (all Stripe resources)
 └── docker-compose.yml   ← Run everything in Docker
 ```
 

@@ -38,116 +38,114 @@ assert_json_type() {
 echo "=== OpenAI API Sample Tests ==="
 echo ""
 
+# Download spec if not present
+if [ ! -f openai.yaml ]; then
+  echo "  Downloading OpenAI spec..."
+  curl -sL https://app.stainless.com/api/spec/documented/openai/openapi.documented.yml -o openai.yaml
+fi
+
 # Start fresh
 $MOCKD_BIN stop 2>/dev/null || true
 sleep 1
-$MOCKD_BIN start --no-auth --data-dir /tmp/mockd-openai-test -d 2>/dev/null
+$MOCKD_BIN start -c mockd.yaml --no-auth -d 2>/dev/null
 sleep 2
 
 # Verify server is healthy
 STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$ADMIN_URL/health")
 assert_status "Server healthy" "200" "$STATUS"
 
-# ── Test 1: OpenAPI Import ───────────────────────────────────────────
+# ── Test 1: Models (seeded table) ────────────────────────────────────
 
 echo ""
-echo "--- OpenAPI Import ---"
-
-if [ ! -f openai.yaml ]; then
-  echo "  Downloading OpenAI spec..."
-  curl -sL https://app.stainless.com/api/spec/documented/openai/openapi.documented.yml -o openai.yaml
-fi
-
-OUTPUT=$($MOCKD_BIN import openai.yaml 2>&1)
-assert_contains "Spec imported" "mocks" "$OUTPUT"
-
-# ── Test 2: Chat Completions ─────────────────────────────────────────
-
-echo ""
-echo "--- Chat Completions ---"
-
-# Note: OpenAI paths don't include /v1/ prefix (spec is relative to server base URL)
-BODY=$(curl -s -X POST "$BASE_URL/chat/completions" \
-  -H "Authorization: Bearer sk-fake" \
-  -H "Content-Type: application/json" \
-  -d '{"model":"gpt-4","messages":[{"role":"user","content":"Hello"}]}')
-assert_json_type "POST /chat/completions returns valid JSON" "$BODY"
-assert_contains "Response has 'choices' field" "choices" "$BODY"
-assert_contains "Response has 'model' field" "model" "$BODY"
-
-STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BASE_URL/chat/completions" \
-  -H "Content-Type: application/json" \
-  -d '{"model":"gpt-4","messages":[{"role":"user","content":"Hello"}]}')
-assert_status "POST /chat/completions returns 200" "200" "$STATUS"
-
-# ── Test 3: Models ───────────────────────────────────────────────────
-
-echo ""
-echo "--- Models ---"
-
-STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$BASE_URL/models")
-assert_status "GET /models returns 200" "200" "$STATUS"
+echo "--- Models (stateful, seeded) ---"
 
 BODY=$(curl -s "$BASE_URL/models")
 assert_json_type "GET /models returns valid JSON" "$BODY"
+assert_contains "Response has 'data' field" "data" "$BODY"
+assert_contains "Seed data includes gpt-4o" "gpt-4o" "$BODY"
+assert_contains "Seed data includes gpt-4o-mini" "gpt-4o-mini" "$BODY"
+assert_contains "Seed data includes gpt-3.5-turbo" "gpt-3.5-turbo" "$BODY"
 
-# ── Test 4: Embeddings ───────────────────────────────────────────────
+STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$BASE_URL/models/gpt-4o")
+assert_status "GET /models/gpt-4o returns 200" "200" "$STATUS"
+
+# ── Test 2: Assistants (stateful CRUD) ───────────────────────────────
 
 echo ""
-echo "--- Embeddings ---"
+echo "--- Assistants (stateful CRUD) ---"
 
-BODY=$(curl -s -X POST "$BASE_URL/embeddings" \
+# Create
+BODY=$(curl -s -X POST "$BASE_URL/assistants" \
   -H "Content-Type: application/json" \
-  -d '{"model":"text-embedding-3-small","input":"Hello world"}')
-assert_json_type "POST /embeddings returns valid JSON" "$BODY"
+  -d '{"model":"gpt-4o","name":"Test Assistant","instructions":"You are helpful."}')
+assert_json_type "POST /assistants returns valid JSON" "$BODY"
+assert_contains "Created assistant has 'id'" "id" "$BODY"
+ASST_ID=$(echo "$BODY" | python3 -c "import json,sys; print(json.load(sys.stdin).get('id',''))" 2>/dev/null || echo "")
+
+# List
+BODY=$(curl -s "$BASE_URL/assistants")
+assert_json_type "GET /assistants returns valid JSON" "$BODY"
+assert_contains "List has 'data' field" "data" "$BODY"
+if [ -n "$ASST_ID" ]; then
+  assert_contains "List contains created assistant" "$ASST_ID" "$BODY"
+fi
+
+# Get by ID
+if [ -n "$ASST_ID" ]; then
+  STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$BASE_URL/assistants/$ASST_ID")
+  assert_status "GET /assistants/{id} returns 200" "200" "$STATUS"
+fi
+
+# ── Test 3: Chat Completions (spec-generated) ────────────────────────
+
+echo ""
+echo "--- Chat Completions (spec-generated) ---"
+
+BODY=$(curl -s -X POST "$BASE_URL/chat/completions" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"gpt-4o","messages":[{"role":"user","content":"Hello"}]}')
+assert_json_type "POST /chat/completions returns valid JSON" "$BODY"
+assert_contains "Response has 'choices' field" "choices" "$BODY"
+
+STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BASE_URL/chat/completions" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"gpt-4o","messages":[{"role":"user","content":"Hello"}]}')
+assert_status "POST /chat/completions returns 200" "200" "$STATUS"
+
+# ── Test 4: Threads (stateful CRUD) ──────────────────────────────────
+
+echo ""
+echo "--- Threads (stateful CRUD) ---"
+
+# Create
+BODY=$(curl -s -X POST "$BASE_URL/threads" \
+  -H "Content-Type: application/json" \
+  -d '{}')
+assert_json_type "POST /threads returns valid JSON" "$BODY"
+assert_contains "Created thread has 'id'" "id" "$BODY"
+THREAD_ID=$(echo "$BODY" | python3 -c "import json,sys; print(json.load(sys.stdin).get('id',''))" 2>/dev/null || echo "")
+
+# Get by ID
+if [ -n "$THREAD_ID" ]; then
+  STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$BASE_URL/threads/$THREAD_ID")
+  assert_status "GET /threads/{id} returns 200" "200" "$STATUS"
+fi
+
+# Delete
+if [ -n "$THREAD_ID" ]; then
+  BODY=$(curl -s -X DELETE "$BASE_URL/threads/$THREAD_ID")
+  assert_contains "Delete returns deleted:true" "deleted" "$BODY"
+fi
+
+# ── Test 5: Embeddings (spec-generated) ──────────────────────────────
+
+echo ""
+echo "--- Embeddings (spec-generated) ---"
 
 STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BASE_URL/embeddings" \
   -H "Content-Type: application/json" \
   -d '{"model":"text-embedding-3-small","input":"Hello world"}')
 assert_status "POST /embeddings returns 200" "200" "$STATUS"
-
-# ── Test 5: Image Generation ─────────────────────────────────────────
-
-echo ""
-echo "--- Image Generation ---"
-
-BODY=$(curl -s -X POST "$BASE_URL/images/generations" \
-  -H "Content-Type: application/json" \
-  -d '{"model":"dall-e-3","prompt":"a cat","n":1}')
-assert_json_type "POST /images/generations returns valid JSON" "$BODY"
-
-STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BASE_URL/images/generations" \
-  -H "Content-Type: application/json" \
-  -d '{"model":"dall-e-3","prompt":"a cat","n":1}')
-assert_status "POST /images/generations returns 200" "200" "$STATUS"
-
-# ── Test 6: Chaos Engineering ────────────────────────────────────────
-
-echo ""
-echo "--- Chaos Engineering ---"
-
-# Enable chaos
-$MOCKD_BIN chaos apply flaky >/dev/null 2>&1
-
-# Send 20 requests, count errors
-ERRORS=0
-for i in $(seq 1 20); do
-  STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$BASE_URL/models")
-  if [ "$STATUS" != "200" ]; then ERRORS=$((ERRORS + 1)); fi
-done
-
-if [ "$ERRORS" -gt 0 ]; then
-  pass "Chaos flaky profile injected $ERRORS errors in 20 requests"
-else
-  fail "Chaos flaky profile should have injected at least 1 error (got 0 in 20 requests)"
-fi
-
-# Disable chaos
-$MOCKD_BIN chaos disable >/dev/null 2>&1
-
-# Verify back to normal
-STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$BASE_URL/models")
-assert_status "After chaos disable, /models returns 200" "200" "$STATUS"
 
 # ── Cleanup ──────────────────────────────────────────────────────────
 

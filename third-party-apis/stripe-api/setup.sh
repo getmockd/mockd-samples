@@ -10,9 +10,14 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 echo "=== Stripe API Mock Setup ==="
 echo ""
 
-echo "1. Downloading Stripe's OpenAPI spec..."
-curl -sL https://raw.githubusercontent.com/stripe/openapi/master/openapi/spec3.yaml -o "$SCRIPT_DIR/stripe.yaml"
-echo "   Done ($(wc -l < "$SCRIPT_DIR/stripe.yaml") lines)"
+# The spec is committed in the repo. If missing, download it.
+if [ ! -f "$SCRIPT_DIR/stripe.yaml" ]; then
+  echo "1. Downloading Stripe's OpenAPI spec..."
+  curl -sL https://raw.githubusercontent.com/stripe/openapi/master/openapi/spec3.yaml -o "$SCRIPT_DIR/stripe.yaml"
+  echo "   Done ($(wc -l < "$SCRIPT_DIR/stripe.yaml") lines)"
+else
+  echo "1. Stripe OpenAPI spec found (stripe.yaml)"
+fi
 
 echo ""
 echo "2. Starting mockd with Stripe config..."

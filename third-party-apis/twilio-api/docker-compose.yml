@@ -1,6 +1,6 @@
-# Mock the Stripe API with Docker
+# Mock the Twilio API with Docker
 # Usage: docker compose up
-# Then:  curl http://localhost:4280/v1/customers -H "Authorization: Bearer sk_test_fake"
+# Then:  curl http://localhost:4280/2010-04-01/Accounts/AC_test/Messages.json
 
 services:
   mockd:

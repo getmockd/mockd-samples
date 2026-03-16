@@ -1,34 +1,18 @@
 # Mock the OpenAI API with Docker
 # Usage: docker compose up
-# Then:  curl -X POST http://localhost:4280/chat/completions -H "Authorization: Bearer sk-fake" -H "Content-Type: application/json" -d '{"model":"gpt-4","messages":[{"role":"user","content":"Hello"}]}'
+# Then:  curl http://localhost:4280/models | jq
 
 services:
   mockd:
-    image: ghcr.io/getmockd/mockd:latest
+    image: ghcr.io/getmockd/mockd:0.6
     ports:
       - "4280:4280"
       - "4290:4290"
-    command: ["serve", "--no-auth"]
+    volumes:
+      - .:/config
+    command: ["start", "-c", "/config/mockd.yaml", "--no-auth"]
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:4290/health"]
-      interval: 2s
-      timeout: 5s
-      retries: 3
-
-  import:
-    image: curlimages/curl:latest
-    depends_on:
-      mockd:
-        condition: service_healthy
-    entrypoint: /bin/sh
-    command:
-      - -c
-      - |
-        echo "Downloading OpenAI OpenAPI spec..."
-        curl -sL https://app.stainless.com/api/spec/documented/openai/openapi.documented.yml -o /tmp/openai.yaml
-        echo "Importing into mockd..."
-        curl -s -X POST http://mockd:4290/import \
-          -H "Content-Type: application/x-yaml" \
-          --data-binary @/tmp/openai.yaml
-        echo ""
-        echo "Done! OpenAI API is mocked at http://localhost:4280"
+      test: ["CMD", "curl", "-sf", "http://localhost:4290/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
