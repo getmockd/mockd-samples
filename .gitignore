@@ -1,0 +1,13 @@
+# Downloaded OpenAPI specs (setup.sh downloads them fresh)
+*.yaml
+!mockd.yaml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Temp
+/tmp/

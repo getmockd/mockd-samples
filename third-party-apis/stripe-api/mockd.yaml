@@ -1,0 +1,566 @@
+# Stripe API Digital Twin — Tables + Extend Architecture
+# Usage: mockd start -c mockd.yaml
+#
+# Single command — imports the OpenAPI spec, defines stateful data tables,
+# and binds specific Stripe endpoints to those tables via extend.
+#
+# Features:
+#   - 587 schema-generated endpoints from Stripe's OpenAPI spec
+#   - 8 stateful data tables with full response transforms
+#   - Explicit extend bindings: operationId → table + action
+#   - Prefix IDs (cus_, pi_, sub_, prod_, price_, in_, re_, dp_)
+#   - Unix timestamps renamed to "created"
+#   - "object" type discriminator injected on every response
+#   - List envelope: {"object":"list","data":[...],"has_more":<computed>}
+#   - Create returns 200 (not 201)
+#   - Delete returns 200 with {"id":"...","object":"...","deleted":true}
+#   - Errors match Stripe's {"error":{"type":"...","message":"..."}} format
+#   - Accepts application/x-www-form-urlencoded (Stripe SDK default)
+#   - Cursor pagination via starting_after/ending_before
+
+version: "1.0"
+
+imports:
+  - path: stripe.yaml
+    as: stripe
+
+# Shared Stripe error format — reused via YAML anchors
+x-stripe-errors: &stripe-errors
+  wrap: error
+  fields:
+    message: message
+    type: type
+    code: code
+  typeMap:
+    NOT_FOUND: invalid_request_error
+    CONFLICT: invalid_request_error
+    VALIDATION_ERROR: invalid_request_error
+    CAPACITY_EXCEEDED: api_error
+    INTERNAL_ERROR: api_error
+  codeMap:
+    NOT_FOUND: resource_missing
+    CONFLICT: resource_already_exists
+    VALIDATION_ERROR: parameter_invalid
+
+# Shared Stripe response transforms — reused via YAML anchors
+x-stripe-timestamps: &stripe-timestamps
+  format: unix
+  fields:
+    createdAt: created
+    updatedAt: updated
+
+x-stripe-hide: &stripe-hide
+  - updatedAt
+
+# ============================================================================
+# Tables — pure data stores, no routing
+# ============================================================================
+tables:
+  - name: customers
+    idField: id
+    idStrategy: prefix
+    idPrefix: "cus_"
+    seedData:
+      - { id: "cus_123", name: "Jenny Rosen", email: "jenny.rosen@example.com", description: "Test customer" }
+    response: &customers-response
+      timestamps: *stripe-timestamps
+      fields:
+        inject:
+          object: customer
+          livemode: false
+        hide: *stripe-hide
+      list:
+        dataField: data
+        extraFields:
+          object: list
+          url: /v1/customers
+          has_more: false
+        hideMeta: true
+      create:
+        status: 200
+      delete:
+        status: 200
+        preserve: true
+        body:
+          id: "{{item.id}}"
+          object: customer
+          deleted: true
+      errors: *stripe-errors
+
+  - name: payment_intents
+    idField: id
+    idStrategy: prefix
+    idPrefix: "pi_"
+    relationships:
+      customer: { table: customers }
+    seedData:
+      - { id: "pi_123", amount: 1099, currency: "usd", status: "requires_payment_method", payment_method_types: ["card"] }
+    response: &payment-intents-response
+      timestamps: *stripe-timestamps
+      fields:
+        inject:
+          object: payment_intent
+          livemode: false
+        hide: *stripe-hide
+      list:
+        dataField: data
+        extraFields:
+          object: list
+          url: /v1/payment_intents
+          has_more: false
+        hideMeta: true
+      create:
+        status: 200
+      errors: *stripe-errors
+
+  - name: subscriptions
+    idField: id
+    idStrategy: prefix
+    idPrefix: "sub_"
+    relationships:
+      customer: { table: customers }
+      latest_invoice: { table: invoices }
+    seedData:
+      - { id: "sub_123", customer: "cus_123", status: "active", collection_method: "charge_automatically" }
+    response: &subscriptions-response
+      timestamps: *stripe-timestamps
+      fields:
+        inject:
+          object: subscription
+          livemode: false
+        hide: *stripe-hide
+        wrapAsList:
+          items:
+            url: "/v1/subscriptions/{{id}}/items"
+      list:
+        dataField: data
+        extraFields:
+          object: list
+          url: /v1/subscriptions
+          has_more: false
+        hideMeta: true
+      create:
+        status: 200
+      delete:
+        status: 200
+        preserve: true
+        body:
+          id: "{{item.id}}"
+          object: subscription
+          deleted: true
+      errors: *stripe-errors
+
+  - name: products
+    idField: id
+    idStrategy: prefix
+    idPrefix: "prod_"
+    seedData:
+      - { id: "prod_123", name: "Test Product", active: true, description: "A test product" }
+    response: &products-response
+      timestamps: *stripe-timestamps
+      fields:
+        inject:
+          object: product
+          livemode: false
+        hide: *stripe-hide
+      list:
+        dataField: data
+        extraFields:
+          object: list
+          url: /v1/products
+          has_more: false
+        hideMeta: true
+      create:
+        status: 200
+      delete:
+        status: 200
+        preserve: true
+        body:
+          id: "{{item.id}}"
+          object: product
+          deleted: true
+      errors: *stripe-errors
+
+  - name: prices
+    idField: id
+    idStrategy: prefix
+    idPrefix: "price_"
+    seedData:
+      - { id: "price_123", product: "prod_123", currency: "usd", unit_amount: 1000, active: true, type: "one_time" }
+      - { id: "gold", product: "prod_123", currency: "usd", unit_amount: 2000, active: true, type: "recurring", nickname: "Gold Plan", recurring: { interval: "month", interval_count: 1, usage_type: "licensed" }, lookup_keys: ["Key1", "Key2"] }
+    response: &prices-response
+      timestamps: *stripe-timestamps
+      fields:
+        inject:
+          object: price
+          livemode: false
+        hide: *stripe-hide
+      list:
+        dataField: data
+        extraFields:
+          object: list
+          url: /v1/prices
+          has_more: false
+        hideMeta: true
+      create:
+        status: 200
+      errors: *stripe-errors
+
+  - name: invoices
+    idField: id
+    idStrategy: prefix
+    idPrefix: "in_"
+    relationships:
+      customer: { table: customers }
+      subscription: { table: subscriptions }
+    seedData:
+      - { id: "in_123", customer: "cus_123", status: "draft", currency: "usd", amount_due: 0, amount_paid: 0, amount_remaining: 0 }
+    response: &invoices-response
+      timestamps: *stripe-timestamps
+      fields:
+        inject:
+          object: invoice
+          livemode: false
+        hide: *stripe-hide
+        wrapAsList:
+          lines:
+            url: "/v1/invoices/{{id}}/lines"
+      list:
+        dataField: data
+        extraFields:
+          object: list
+          url: /v1/invoices
+          has_more: false
+        hideMeta: true
+      create:
+        status: 200
+      delete:
+        status: 200
+        preserve: true
+        body:
+          id: "{{item.id}}"
+          object: invoice
+          deleted: true
+      errors: *stripe-errors
+
+  - name: invoice_line_items
+    idField: id
+    idStrategy: prefix
+    idPrefix: "il_"
+    parentField: invoice
+    seedData:
+      - { id: "il_123", invoice: "in_123", amount: 1000, currency: "usd", description: "Subscription update", discountable: true, livemode: false, object: "line_item", quantity: 1, type: "subscription" }
+    response: &invoice-line-items-response
+      timestamps: *stripe-timestamps
+      fields:
+        inject:
+          object: line_item
+          livemode: false
+        hide: *stripe-hide
+      list:
+        dataField: data
+        extraFields:
+          object: list
+          url: /v1/invoices/in_123/lines
+          has_more: false
+        hideMeta: true
+      errors: *stripe-errors
+
+  - name: refunds
+    idField: id
+    idStrategy: prefix
+    idPrefix: "re_"
+    relationships:
+      payment_intent: { table: payment_intents }
+      charge: { table: charges }
+    seedData:
+      - { id: "re_123", amount: 1000, charge: "ch_123", currency: "usd", status: "succeeded" }
+      - { id: "gold", amount: 500, charge: "ch_456", currency: "usd", status: "succeeded" }
+    response: &refunds-response
+      timestamps: *stripe-timestamps
+      fields:
+        inject:
+          object: refund
+        hide: *stripe-hide
+      list:
+        dataField: data
+        extraFields:
+          object: list
+          url: /v1/refunds
+          has_more: false
+        hideMeta: true
+      create:
+        status: 200
+      errors: *stripe-errors
+
+  - name: disputes
+    idField: id
+    idStrategy: prefix
+    idPrefix: "dp_"
+    seedData:
+      - { id: "dp_123", amount: 1000, charge: "ch_123", currency: "usd", status: "warning_needs_response", reason: "fraudulent" }
+    response: &disputes-response
+      timestamps: *stripe-timestamps
+      fields:
+        inject:
+          object: dispute
+          livemode: false
+        hide: *stripe-hide
+      list:
+        dataField: data
+        extraFields:
+          object: list
+          url: /v1/disputes
+          has_more: false
+        hideMeta: true
+      create:
+        status: 200
+      errors: *stripe-errors
+
+# ============================================================================
+# Extend — bind imported mocks to tables
+# ============================================================================
+extend:
+  # Customers
+  - { mock: stripe.PostCustomers,          table: customers, action: create }
+  - { mock: stripe.GetCustomers,           table: customers, action: list }
+  - { mock: stripe.GetCustomersCustomer,   table: customers, action: get }
+  - { mock: stripe.PostCustomersCustomer,  table: customers, action: patch }
+  - { mock: stripe.DeleteCustomersCustomer, table: customers, action: delete }
+
+  # Payment Intents
+  - { mock: stripe.PostPaymentIntents,       table: payment_intents, action: create }
+  - { mock: stripe.GetPaymentIntents,        table: payment_intents, action: list }
+  - { mock: stripe.GetPaymentIntentsIntent,  table: payment_intents, action: get }
+  - { mock: stripe.PostPaymentIntentsIntent, table: payment_intents, action: patch }
+
+  # Subscriptions
+  - { mock: stripe.PostSubscriptions,                             table: subscriptions, action: create }
+  - { mock: stripe.GetSubscriptions,                              table: subscriptions, action: list }
+  - { mock: stripe.GetSubscriptionsSubscriptionExposedId,         table: subscriptions, action: get }
+  - { mock: stripe.PostSubscriptionsSubscriptionExposedId,        table: subscriptions, action: patch }
+  - { mock: stripe.DeleteSubscriptionsSubscriptionExposedId,      table: subscriptions, action: delete }
+
+  # Products
+  - { mock: stripe.PostProducts,   table: products, action: create }
+  - { mock: stripe.GetProducts,    table: products, action: list }
+  - { mock: stripe.GetProductsId,  table: products, action: get }
+  - { mock: stripe.PostProductsId, table: products, action: patch }
+  - { mock: stripe.DeleteProductsId, table: products, action: delete }
+
+  # Prices
+  - { mock: stripe.PostPrices,     table: prices, action: create }
+  - { mock: stripe.GetPrices,      table: prices, action: list }
+  - { mock: stripe.GetPricesPrice, table: prices, action: get }
+  - { mock: stripe.PostPricesPrice, table: prices, action: patch }
+
+  # Invoices
+  - { mock: stripe.PostInvoices,        table: invoices, action: create }
+  - { mock: stripe.GetInvoices,         table: invoices, action: list }
+  - { mock: stripe.GetInvoicesInvoice,  table: invoices, action: get }
+  - { mock: stripe.PostInvoicesInvoice, table: invoices, action: patch }
+  - { mock: stripe.DeleteInvoicesInvoice, table: invoices, action: delete }
+
+  # Invoice Line Items (sub-resource)
+  - { mock: stripe.GetInvoicesInvoiceLines, table: invoice_line_items, action: list }
+
+  # Refunds
+  - { mock: stripe.PostRefunds,      table: refunds, action: create }
+  - { mock: stripe.GetRefunds,       table: refunds, action: list }
+  - { mock: stripe.GetRefundsRefund, table: refunds, action: get }
+  - { mock: stripe.PostRefundsRefund, table: refunds, action: patch }
+
+  # Disputes
+  - { mock: stripe.GetDisputes,        table: disputes, action: list }
+  - { mock: stripe.GetDisputesDispute, table: disputes, action: get }
+  - { mock: stripe.PostDisputesDispute, table: disputes, action: update }
+
+  # Payment Intent actions (via custom operations)
+  - { mock: stripe.PostPaymentIntentsIntentConfirm, table: payment_intents, action: custom, operation: ConfirmPaymentIntent }
+  - { mock: stripe.PostPaymentIntentsIntentCancel,  table: payment_intents, action: custom, operation: CancelPaymentIntent }
+  - { mock: stripe.PostPaymentIntentsIntentCapture, table: payment_intents, action: custom, operation: CapturePaymentIntent }
+
+  # Invoice actions (via custom operations)
+  - { mock: stripe.PostInvoicesInvoiceFinalize,          table: invoices, action: custom, operation: FinalizeInvoice }
+  - { mock: stripe.PostInvoicesInvoicePay,               table: invoices, action: custom, operation: PayInvoice }
+  - { mock: stripe.PostInvoicesInvoiceVoid,              table: invoices, action: custom, operation: VoidInvoice }
+  - { mock: stripe.PostInvoicesInvoiceSend,              table: invoices, action: custom, operation: SendInvoice }
+  - { mock: stripe.PostInvoicesInvoiceMarkUncollectible, table: invoices, action: custom, operation: MarkUncollectible }
+
+# ============================================================================
+# Custom Operations — action endpoint logic
+# ============================================================================
+customOperations:
+  # POST /v1/payment_intents/{intent}/confirm
+  # Sets status to "succeeded" (simplified — real Stripe has more states).
+  - name: ConfirmPaymentIntent
+    steps:
+      - type: read
+        resource: payment_intents
+        id: "input.intent"
+        as: pi
+      - type: update
+        resource: payment_intents
+        id: "input.intent"
+        set:
+          status: '"succeeded"'
+          amount_received: "pi.amount"
+    response:
+      id: "pi.id"
+      object: '"payment_intent"'
+      amount: "pi.amount"
+      amount_received: "pi.amount"
+      currency: "pi.currency"
+      status: '"succeeded"'
+      livemode: "false"
+
+  # POST /v1/payment_intents/{intent}/cancel
+  # Sets status to "canceled" with optional cancellation_reason.
+  - name: CancelPaymentIntent
+    steps:
+      - type: read
+        resource: payment_intents
+        id: "input.intent"
+        as: pi
+      - type: update
+        resource: payment_intents
+        id: "input.intent"
+        set:
+          status: '"canceled"'
+          cancellation_reason: 'input.cancellation_reason ?? "requested_by_customer"'
+    response:
+      id: "pi.id"
+      object: '"payment_intent"'
+      amount: "pi.amount"
+      currency: "pi.currency"
+      status: '"canceled"'
+      cancellation_reason: 'input.cancellation_reason ?? "requested_by_customer"'
+      livemode: "false"
+
+  # POST /v1/payment_intents/{intent}/capture
+  # Captures a previously authorized payment intent.
+  - name: CapturePaymentIntent
+    steps:
+      - type: read
+        resource: payment_intents
+        id: "input.intent"
+        as: pi
+      - type: update
+        resource: payment_intents
+        id: "input.intent"
+        set:
+          status: '"succeeded"'
+          amount_received: "input.amount_to_capture ?? pi.amount"
+    response:
+      id: "pi.id"
+      object: '"payment_intent"'
+      amount: "pi.amount"
+      amount_received: "input.amount_to_capture ?? pi.amount"
+      currency: "pi.currency"
+      status: '"succeeded"'
+      livemode: "false"
+
+  # POST /v1/invoices/{invoice}/finalize
+  - name: FinalizeInvoice
+    steps:
+      - type: read
+        resource: invoices
+        id: "input.invoice"
+        as: inv
+      - type: update
+        resource: invoices
+        id: "input.invoice"
+        set:
+          status: '"open"'
+    response:
+      id: "inv.id"
+      object: '"invoice"'
+      status: '"open"'
+      customer: "inv.customer"
+      currency: "inv.currency"
+      livemode: "false"
+
+  # POST /v1/invoices/{invoice}/pay
+  - name: PayInvoice
+    steps:
+      - type: read
+        resource: invoices
+        id: "input.invoice"
+        as: inv
+      - type: update
+        resource: invoices
+        id: "input.invoice"
+        set:
+          status: '"paid"'
+          amount_paid: "inv.amount_due"
+          amount_remaining: "0"
+    response:
+      id: "inv.id"
+      object: '"invoice"'
+      status: '"paid"'
+      customer: "inv.customer"
+      currency: "inv.currency"
+      amount_due: "inv.amount_due"
+      amount_paid: "inv.amount_due"
+      amount_remaining: "0"
+      livemode: "false"
+
+  # POST /v1/invoices/{invoice}/void
+  - name: VoidInvoice
+    steps:
+      - type: read
+        resource: invoices
+        id: "input.invoice"
+        as: inv
+      - type: update
+        resource: invoices
+        id: "input.invoice"
+        set:
+          status: '"void"'
+    response:
+      id: "inv.id"
+      object: '"invoice"'
+      status: '"void"'
+      customer: "inv.customer"
+      currency: "inv.currency"
+      livemode: "false"
+
+  # POST /v1/invoices/{invoice}/send
+  - name: SendInvoice
+    steps:
+      - type: read
+        resource: invoices
+        id: "input.invoice"
+        as: inv
+      - type: update
+        resource: invoices
+        id: "input.invoice"
+        set:
+          status: '"open"'
+    response:
+      id: "inv.id"
+      object: '"invoice"'
+      status: '"open"'
+      customer: "inv.customer"
+      currency: "inv.currency"
+      livemode: "false"
+
+  # POST /v1/invoices/{invoice}/mark_uncollectible
+  - name: MarkUncollectible
+    steps:
+      - type: read
+        resource: invoices
+        id: "input.invoice"
+        as: inv
+      - type: update
+        resource: invoices
+        id: "input.invoice"
+        set:
+          status: '"uncollectible"'
+    response:
+      id: "inv.id"
+      object: '"invoice"'
+      status: '"uncollectible"'
+      customer: "inv.customer"
+      currency: "inv.currency"
+      livemode: "false"

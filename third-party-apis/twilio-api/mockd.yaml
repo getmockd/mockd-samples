@@ -1,0 +1,526 @@
+# Twilio API v2010 Digital Twin — Tables + Extend Architecture
+# Usage: mockd start -c mockd.yaml
+#
+# Proves the tables+extend pattern generalizes beyond Stripe.
+# Imports Twilio's official OpenAPI spec (197 endpoints across 121 paths),
+# then layers stateful CRUD tables on top of the 6 most-used resources.
+#
+# Key differences from Stripe twin:
+#   - Base path: /2010-04-01/Accounts/{AccountSid}/...
+#   - Auth: HTTP Basic (account SID + auth token), not Bearer
+#   - IDs: 34-char SIDs (2-letter prefix + 32 hex), not short prefixed
+#   - Timestamps: ISO 8601 strings (date_created, date_updated), not Unix
+#   - List envelope: {"messages":[...],"page":0,"page_size":50,...} (not {"object":"list","data":[...]})
+#   - No "object" type discriminator on individual resources
+#   - Pagination: page-based (page, page_size), not cursor-based
+#   - Error format: {"code":20404,"message":"...","status":404,"more_info":"..."}
+#
+# Note: Twilio's spec includes .json in all paths (e.g., /Messages.json).
+# This is a format selector — Twilio's default is XML, .json requests JSON.
+# The SDK appends .json automatically, so paths match as-is.
+#
+# Resources with stateful tables (7 tables, 32 extend bindings):
+#   1. Messages (SMS)    — create, list, get, update, delete
+#   2. Calls             — create, list, get, update, delete
+#   3. Accounts          — create, list, get, update
+#   4. IncomingPhoneNumbers — create, list, get, update, delete
+#   5. Recordings        — list, get, delete
+#   6. Conferences       — list, get, update
+#   7. Participants      — create, list, get, update, delete (conference sub-resource)
+
+version: "1.0"
+
+imports:
+  - path: twilio.json
+    as: twilio
+
+# ============================================================================
+# Shared YAML anchors — Twilio error + timestamp + field transforms
+# ============================================================================
+
+# Twilio error format: {"code":20404,"message":"...","more_info":"...","status":404}
+x-twilio-errors: &twilio-errors
+  fields:
+    message: message
+    code: code
+    status: status
+    more_info: more_info
+  typeMap:
+    NOT_FOUND: not_found
+    CONFLICT: conflict
+    VALIDATION_ERROR: invalid_parameter
+    INTERNAL_ERROR: internal_error
+  codeMap:
+    NOT_FOUND: "20404"
+    CONFLICT: "20409"
+    VALIDATION_ERROR: "20001"
+
+# Twilio timestamps: ISO 8601 as date_created / date_updated
+x-twilio-timestamps: &twilio-timestamps
+  format: iso8601
+  fields:
+    createdAt: date_created
+    updatedAt: date_updated
+
+x-twilio-hide: &twilio-hide
+  - updatedAt
+
+# Rename id → sid (engine always outputs "id"; Twilio calls it "sid")
+x-twilio-rename: &twilio-rename
+  id: sid
+
+# ============================================================================
+# Tables — pure data stores, no routing
+# ============================================================================
+tables:
+  # --------------------------------------------------------------------------
+  # Messages (SMS/MMS)
+  # Twilio SID prefix: SM (34 chars total: SM + 32 hex)
+  # --------------------------------------------------------------------------
+  - name: messages
+    idField: sid
+    idStrategy: prefix
+    idPrefix: "SM"
+    seedData:
+      - sid: "SM2a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d"
+        account_sid: "AC_test"
+        api_version: "2010-04-01"
+        body: "Hey Jenny! Good luck on the interview tomorrow."
+        from: "+15558675310"
+        to: "+15551234567"
+        direction: "outbound-api"
+        status: "delivered"
+        num_segments: "1"
+        num_media: "0"
+        price: "-0.00750"
+        price_unit: "USD"
+        error_code: null
+        error_message: null
+        messaging_service_sid: null
+        uri: "/2010-04-01/Accounts/AC_test/Messages/SM2a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d.json"
+        subresource_uris:
+          media: "/2010-04-01/Accounts/AC_test/Messages/SM2a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d/Media.json"
+      - sid: "SM9f8e7d6c5b4a3f2e1d0c9b8a7f6e5d4c"
+        account_sid: "AC_test"
+        api_version: "2010-04-01"
+        body: "Your verification code is 483291"
+        from: "+15558675310"
+        to: "+15559876543"
+        direction: "outbound-api"
+        status: "sent"
+        num_segments: "1"
+        num_media: "0"
+        price: "-0.00750"
+        price_unit: "USD"
+        error_code: null
+        error_message: null
+        messaging_service_sid: null
+        uri: "/2010-04-01/Accounts/AC_test/Messages/SM9f8e7d6c5b4a3f2e1d0c9b8a7f6e5d4c.json"
+        subresource_uris:
+          media: "/2010-04-01/Accounts/AC_test/Messages/SM9f8e7d6c5b4a3f2e1d0c9b8a7f6e5d4c/Media.json"
+    response: &messages-response
+      timestamps: *twilio-timestamps
+      fields:
+        rename: *twilio-rename
+        hide: *twilio-hide
+      list:
+        dataField: messages
+        extraFields:
+          page: 0
+          page_size: 50
+          start: 0
+          end: 0
+          uri: "/2010-04-01/Accounts/AC_test/Messages.json"
+          first_page_uri: "/2010-04-01/Accounts/AC_test/Messages.json?PageSize=50&Page=0"
+          next_page_uri: null
+          previous_page_uri: null
+        hideMeta: true
+      create:
+        status: 201
+      errors: *twilio-errors
+
+  # --------------------------------------------------------------------------
+  # Calls
+  # Twilio SID prefix: CA
+  # --------------------------------------------------------------------------
+  - name: calls
+    idField: sid
+    idStrategy: prefix
+    idPrefix: "CA"
+    seedData:
+      - sid: "CA1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d"
+        account_sid: "AC_test"
+        api_version: "2010-04-01"
+        from: "+15558675310"
+        from_formatted: "(555) 867-5310"
+        to: "+15551234567"
+        to_formatted: "(555) 123-4567"
+        direction: "outbound-api"
+        status: "completed"
+        duration: "45"
+        price: "-0.01300"
+        price_unit: "USD"
+        start_time: "2026-03-09T14:30:00Z"
+        end_time: "2026-03-09T14:30:45Z"
+        answered_by: null
+        caller_name: null
+        forwarded_from: null
+        group_sid: null
+        parent_call_sid: null
+        phone_number_sid: "PN1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d"
+        queue_time: "0"
+        trunk_sid: null
+        uri: "/2010-04-01/Accounts/AC_test/Calls/CA1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d.json"
+        subresource_uris:
+          notifications: "/2010-04-01/Accounts/AC_test/Calls/CA1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d/Notifications.json"
+          recordings: "/2010-04-01/Accounts/AC_test/Calls/CA1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d/Recordings.json"
+    response: &calls-response
+      timestamps: *twilio-timestamps
+      fields:
+        rename: *twilio-rename
+        hide: *twilio-hide
+      list:
+        dataField: calls
+        extraFields:
+          page: 0
+          page_size: 50
+          start: 0
+          end: 0
+          uri: "/2010-04-01/Accounts/AC_test/Calls.json"
+          first_page_uri: "/2010-04-01/Accounts/AC_test/Calls.json?PageSize=50&Page=0"
+          next_page_uri: null
+          previous_page_uri: null
+        hideMeta: true
+      create:
+        status: 201
+      errors: *twilio-errors
+
+  # --------------------------------------------------------------------------
+  # Accounts (top-level — no AccountSid prefix in paths)
+  # Twilio SID prefix: AC
+  # --------------------------------------------------------------------------
+  - name: accounts
+    idField: sid
+    idStrategy: prefix
+    idPrefix: "AC"
+    seedData:
+      - sid: "AC_test"
+        friendly_name: "My Twilio Test Account"
+        status: "active"
+        type: "Full"
+        auth_token: "mock_auth_token_1234567890abcdef"
+        owner_account_sid: "AC_test"
+        uri: "/2010-04-01/Accounts/AC_test.json"
+        subresource_uris:
+          available_phone_numbers: "/2010-04-01/Accounts/AC_test/AvailablePhoneNumbers.json"
+          calls: "/2010-04-01/Accounts/AC_test/Calls.json"
+          conferences: "/2010-04-01/Accounts/AC_test/Conferences.json"
+          incoming_phone_numbers: "/2010-04-01/Accounts/AC_test/IncomingPhoneNumbers.json"
+          messages: "/2010-04-01/Accounts/AC_test/Messages.json"
+          recordings: "/2010-04-01/Accounts/AC_test/Recordings.json"
+    response: &accounts-response
+      timestamps: *twilio-timestamps
+      fields:
+        rename: *twilio-rename
+        hide: *twilio-hide
+      list:
+        dataField: accounts
+        extraFields:
+          page: 0
+          page_size: 50
+          start: 0
+          end: 0
+          uri: "/2010-04-01/Accounts.json"
+          first_page_uri: "/2010-04-01/Accounts.json?PageSize=50&Page=0"
+          next_page_uri: null
+          previous_page_uri: null
+        hideMeta: true
+      create:
+        status: 201
+      errors: *twilio-errors
+
+  # --------------------------------------------------------------------------
+  # IncomingPhoneNumbers
+  # Twilio SID prefix: PN
+  # --------------------------------------------------------------------------
+  - name: incoming_phone_numbers
+    idField: sid
+    idStrategy: prefix
+    idPrefix: "PN"
+    seedData:
+      - sid: "PN1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d"
+        account_sid: "AC_test"
+        api_version: "2010-04-01"
+        phone_number: "+15558675310"
+        friendly_name: "(555) 867-5310"
+        status: "in-use"
+        capabilities:
+          voice: true
+          sms: true
+          mms: true
+          fax: false
+        beta: false
+        voice_url: "https://handler.twilio.com/twiml/mockd"
+        voice_method: "POST"
+        voice_fallback_url: null
+        voice_fallback_method: "POST"
+        voice_caller_id_lookup: false
+        sms_url: "https://handler.twilio.com/twiml/mockd"
+        sms_method: "POST"
+        sms_fallback_url: null
+        sms_fallback_method: "POST"
+        status_callback: null
+        status_callback_method: "POST"
+        voice_application_sid: null
+        sms_application_sid: null
+        trunk_sid: null
+        emergency_status: "Inactive"
+        emergency_address_sid: null
+        address_requirements: "none"
+        origin: "twilio"
+        uri: "/2010-04-01/Accounts/AC_test/IncomingPhoneNumbers/PN1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d.json"
+      - sid: "PN7f6e5d4c3b2a1f0e9d8c7b6a5f4e3d2c"
+        account_sid: "AC_test"
+        api_version: "2010-04-01"
+        phone_number: "+15559876543"
+        friendly_name: "Customer Support Line"
+        status: "in-use"
+        capabilities:
+          voice: true
+          sms: true
+          mms: true
+          fax: false
+        beta: false
+        voice_url: "https://handler.twilio.com/twiml/mockd-support"
+        voice_method: "POST"
+        voice_fallback_url: null
+        voice_fallback_method: "POST"
+        voice_caller_id_lookup: false
+        sms_url: null
+        sms_method: "POST"
+        sms_fallback_url: null
+        sms_fallback_method: "POST"
+        status_callback: null
+        status_callback_method: "POST"
+        voice_application_sid: null
+        sms_application_sid: null
+        trunk_sid: null
+        emergency_status: "Inactive"
+        emergency_address_sid: null
+        address_requirements: "none"
+        origin: "twilio"
+        uri: "/2010-04-01/Accounts/AC_test/IncomingPhoneNumbers/PN7f6e5d4c3b2a1f0e9d8c7b6a5f4e3d2c.json"
+    response: &incoming-phone-numbers-response
+      timestamps: *twilio-timestamps
+      fields:
+        rename: *twilio-rename
+        hide: *twilio-hide
+      list:
+        dataField: incoming_phone_numbers
+        extraFields:
+          page: 0
+          page_size: 50
+          start: 0
+          end: 0
+          uri: "/2010-04-01/Accounts/AC_test/IncomingPhoneNumbers.json"
+          first_page_uri: "/2010-04-01/Accounts/AC_test/IncomingPhoneNumbers.json?PageSize=50&Page=0"
+          next_page_uri: null
+          previous_page_uri: null
+        hideMeta: true
+      create:
+        status: 201
+      errors: *twilio-errors
+
+  # --------------------------------------------------------------------------
+  # Recordings
+  # Twilio SID prefix: RE
+  # --------------------------------------------------------------------------
+  - name: recordings
+    idField: sid
+    idStrategy: prefix
+    idPrefix: "RE"
+    seedData:
+      - sid: "RE1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d"
+        account_sid: "AC_test"
+        api_version: "2010-04-01"
+        call_sid: "CA1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d"
+        conference_sid: null
+        channels: 1
+        duration: "45"
+        source: "OutboundAPI"
+        status: "completed"
+        price: "-0.00250"
+        price_unit: "USD"
+        error_code: null
+        start_time: "2026-03-09T14:30:00Z"
+        media_url: "https://api.twilio.com/2010-04-01/Accounts/AC_test/Recordings/RE1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d"
+        uri: "/2010-04-01/Accounts/AC_test/Recordings/RE1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d.json"
+        subresource_uris:
+          transcriptions: "/2010-04-01/Accounts/AC_test/Recordings/RE1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d/Transcriptions.json"
+    response: &recordings-response
+      timestamps: *twilio-timestamps
+      fields:
+        rename: *twilio-rename
+        hide: *twilio-hide
+      list:
+        dataField: recordings
+        extraFields:
+          page: 0
+          page_size: 50
+          start: 0
+          end: 0
+          uri: "/2010-04-01/Accounts/AC_test/Recordings.json"
+          first_page_uri: "/2010-04-01/Accounts/AC_test/Recordings.json?PageSize=50&Page=0"
+          next_page_uri: null
+          previous_page_uri: null
+        hideMeta: true
+      delete:
+        status: 204
+      errors: *twilio-errors
+
+  # --------------------------------------------------------------------------
+  # Conferences
+  # Twilio SID prefix: CF
+  # --------------------------------------------------------------------------
+  - name: conferences
+    idField: sid
+    idStrategy: prefix
+    idPrefix: "CF"
+    seedData:
+      - sid: "CF1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d"
+        account_sid: "AC_test"
+        api_version: "2010-04-01"
+        friendly_name: "DailyStandup"
+        status: "in-progress"
+        region: "us1"
+        reason_conference_ended: null
+        call_sid_ending_conference: null
+        uri: "/2010-04-01/Accounts/AC_test/Conferences/CF1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d.json"
+        subresource_uris:
+          participants: "/2010-04-01/Accounts/AC_test/Conferences/CF1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d/Participants.json"
+          recordings: "/2010-04-01/Accounts/AC_test/Conferences/CF1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d/Recordings.json"
+    response: &conferences-response
+      timestamps: *twilio-timestamps
+      fields:
+        rename: *twilio-rename
+        hide: *twilio-hide
+      list:
+        dataField: conferences
+        extraFields:
+          page: 0
+          page_size: 50
+          start: 0
+          end: 0
+          uri: "/2010-04-01/Accounts/AC_test/Conferences.json"
+          first_page_uri: "/2010-04-01/Accounts/AC_test/Conferences.json?PageSize=50&Page=0"
+          next_page_uri: null
+          previous_page_uri: null
+        hideMeta: true
+      errors: *twilio-errors
+
+  # --------------------------------------------------------------------------
+  # Conference Participants (sub-resource of Conferences)
+  # Twilio uses CallSid as the participant identifier
+  # --------------------------------------------------------------------------
+  - name: participants
+    idField: call_sid
+    idStrategy: prefix
+    idPrefix: "CA"
+    parentField: conference_sid
+    seedData:
+      - call_sid: "CA3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f"
+        conference_sid: "CF1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d"
+        account_sid: "AC_test"
+        muted: false
+        hold: false
+        coaching: false
+        call_sid_to_coach: null
+        end_conference_on_exit: false
+        start_conference_on_enter: true
+        status: "connected"
+        label: "host"
+        queue_time: "0"
+        uri: "/2010-04-01/Accounts/AC_test/Conferences/CF1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d/Participants/CA3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f.json"
+    response: &participants-response
+      timestamps: *twilio-timestamps
+      fields:
+        rename:
+          id: call_sid
+        hide: *twilio-hide
+      list:
+        dataField: participants
+        extraFields:
+          page: 0
+          page_size: 50
+          start: 0
+          end: 0
+          uri: "/2010-04-01/Accounts/AC_test/Conferences/CF1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d/Participants.json"
+          first_page_uri: "/2010-04-01/Accounts/AC_test/Conferences/CF1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d/Participants.json?PageSize=50&Page=0"
+          next_page_uri: null
+          previous_page_uri: null
+        hideMeta: true
+      create:
+        status: 201
+      errors: *twilio-errors
+
+# ============================================================================
+# Extend — bind imported spec endpoints to stateful tables
+# ============================================================================
+extend:
+  # --------------------------------------------------------------------------
+  # Messages
+  # --------------------------------------------------------------------------
+  - { mock: twilio.CreateMessage, table: messages, action: create }
+  - { mock: twilio.ListMessage,   table: messages, action: list }
+  - { mock: twilio.FetchMessage,  table: messages, action: get }
+  - { mock: twilio.UpdateMessage, table: messages, action: patch }
+  - { mock: twilio.DeleteMessage, table: messages, action: delete }
+
+  # --------------------------------------------------------------------------
+  # Calls
+  # --------------------------------------------------------------------------
+  - { mock: twilio.CreateCall, table: calls, action: create }
+  - { mock: twilio.ListCall,   table: calls, action: list }
+  - { mock: twilio.FetchCall,  table: calls, action: get }
+  - { mock: twilio.UpdateCall, table: calls, action: patch }
+  - { mock: twilio.DeleteCall, table: calls, action: delete }
+
+  # --------------------------------------------------------------------------
+  # Accounts (top-level CRUD — no AccountSid prefix)
+  # --------------------------------------------------------------------------
+  - { mock: twilio.CreateAccount, table: accounts, action: create }
+  - { mock: twilio.ListAccount,   table: accounts, action: list }
+  - { mock: twilio.FetchAccount,  table: accounts, action: get }
+  - { mock: twilio.UpdateAccount, table: accounts, action: patch }
+
+  # --------------------------------------------------------------------------
+  # Incoming Phone Numbers
+  # --------------------------------------------------------------------------
+  - { mock: twilio.CreateIncomingPhoneNumber, table: incoming_phone_numbers, action: create }
+  - { mock: twilio.ListIncomingPhoneNumber,   table: incoming_phone_numbers, action: list }
+  - { mock: twilio.FetchIncomingPhoneNumber,  table: incoming_phone_numbers, action: get }
+  - { mock: twilio.UpdateIncomingPhoneNumber, table: incoming_phone_numbers, action: patch }
+  - { mock: twilio.DeleteIncomingPhoneNumber, table: incoming_phone_numbers, action: delete }
+
+  # --------------------------------------------------------------------------
+  # Recordings (read-only + delete — Twilio doesn't allow creating via API)
+  # --------------------------------------------------------------------------
+  - { mock: twilio.ListRecording,   table: recordings, action: list }
+  - { mock: twilio.FetchRecording,  table: recordings, action: get }
+  - { mock: twilio.DeleteRecording, table: recordings, action: delete }
+
+  # --------------------------------------------------------------------------
+  # Conferences
+  # --------------------------------------------------------------------------
+  - { mock: twilio.ListConference,   table: conferences, action: list }
+  - { mock: twilio.FetchConference,  table: conferences, action: get }
+  - { mock: twilio.UpdateConference, table: conferences, action: patch }
+
+  # --------------------------------------------------------------------------
+  # Conference Participants (sub-resource)
+  # --------------------------------------------------------------------------
+  - { mock: twilio.CreateParticipant, table: participants, action: create }
+  - { mock: twilio.ListParticipant,   table: participants, action: list }
+  - { mock: twilio.FetchParticipant,  table: participants, action: get }
+  - { mock: twilio.UpdateParticipant, table: participants, action: patch }
+  - { mock: twilio.DeleteParticipant, table: participants, action: delete }

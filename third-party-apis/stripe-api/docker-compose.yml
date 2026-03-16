@@ -1,0 +1,35 @@
+# Mock the Stripe API with Docker
+# Usage: docker compose up
+# Then:  curl http://localhost:4280/v1/customers -H "Authorization: Bearer sk_test_fake"
+
+services:
+  mockd:
+    image: ghcr.io/getmockd/mockd:latest
+    ports:
+      - "4280:4280"
+      - "4290:4290"
+    command: ["serve", "--no-auth"]
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:4290/health"]
+      interval: 2s
+      timeout: 5s
+      retries: 3
+
+  import:
+    image: curlimages/curl:latest
+    depends_on:
+      mockd:
+        condition: service_healthy
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - |
+        echo "Downloading Stripe OpenAPI spec..."
+        curl -sL https://raw.githubusercontent.com/stripe/openapi/master/openapi/spec3.yaml -o /tmp/stripe.yaml
+        echo "Importing into mockd..."
+        curl -s -X POST http://mockd:4290/import \
+          -H "Content-Type: application/x-yaml" \
+          --data-binary @/tmp/stripe.yaml
+        echo ""
+        echo "Done! Stripe API is mocked at http://localhost:4280"
+        echo "Try: curl http://localhost:4280/v1/customers -H 'Authorization: Bearer sk_test_fake'"
