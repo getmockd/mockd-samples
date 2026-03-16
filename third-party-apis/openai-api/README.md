@@ -85,7 +85,7 @@ curl -s -X POST http://localhost:4280/embeddings \
   -d '{"model":"text-embedding-3-small","input":"Hello world"}' | jq
 ```
 
-> **Note:** OpenAI's spec defines paths relative to `https://api.openai.com/v1`, so imported paths don't include the `/v1/` prefix. Use `/chat/completions` not `/v1/chat/completions`.
+> **Note:** OpenAI's spec defines paths relative to `https://api.openai.com/v1`, so imported paths don't include the `/v1/` prefix. Set `base_url="http://localhost:4280"` (no `/v1` suffix) — the SDK appends API paths automatically. Validated with the official `openai` Python SDK.
 
 ## Use With Your SDK
 
