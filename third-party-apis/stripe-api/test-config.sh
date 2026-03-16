@@ -51,9 +51,14 @@ echo ""
 $MOCKD_BIN stop 2>/dev/null || true
 sleep 1
 $MOCKD_BIN start --no-auth -c "$SCRIPT_DIR/mockd.yaml" --data-dir /tmp/mockd-stripe-config-test -d 2>/dev/null
-sleep 2
 
-# Verify server is healthy
+# Wait for server to be ready (large spec can take 10+ seconds to parse)
+for i in $(seq 1 30); do
+  if curl -sf "$ADMIN_URL/health" > /dev/null 2>&1; then
+    break
+  fi
+  sleep 1
+done
 STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$ADMIN_URL/health")
 assert_status "Server healthy" "200" "$STATUS"
 
