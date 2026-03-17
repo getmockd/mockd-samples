@@ -1,0 +1,84 @@
+name: API Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  contract-tests:
+    name: Contract Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Install mockd and start with the config file.
+      # The setup-mockd action installs the CLI; `start: true` boots the
+      # server in daemon mode using the specified config.
+      - uses: getmockd/setup-mockd@v1
+        with:
+          start: true
+          config: mockd.yaml
+          args: "--no-auth"
+
+      # Wait for the mock server to be healthy before running tests.
+      # The health endpoint is on the admin port (default 4290).
+      - name: Wait for mockd
+        run: |
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:4290/health > /dev/null 2>&1; then
+              echo "mockd is ready"
+              break
+            fi
+            echo "Waiting for mockd... ($i/30)"
+            sleep 1
+          done
+
+      # Run the contract test script.
+      - name: Run contract tests
+        run: bash test.sh
+
+      # After tests pass, verify that mock endpoints were actually called.
+      # This is the "contract" part — your tests MUST exercise these endpoints.
+      - name: Verify mock invocations
+        run: |
+          mockd verify check orders-create --at-least 1
+          mockd verify check orders-list --at-least 1
+          mockd verify check payments-create --at-least 1
+
+  # Example: integration testing with multiple services.
+  # Each service gets its own mockd instance with a dedicated config.
+  integration-tests:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: getmockd/setup-mockd@v1
+
+      # Start a payment service mock on the default port.
+      - name: Start payment service mock
+        run: mockd start --no-auth -c mockd.yaml --port 4280 --admin-port 4290 -d
+
+      # You could start additional mocks for other services:
+      # - name: Start inventory service mock
+      #   run: mockd start --no-auth -c inventory-mockd.yaml --port 4281 --admin-port 4291 -d
+
+      - name: Wait for services
+        run: |
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:4290/health > /dev/null 2>&1; then
+              echo "Payment service mock ready"
+              break
+            fi
+            sleep 1
+          done
+
+      - name: Run integration tests
+        run: bash test.sh
+        env:
+          PAYMENT_API_URL: http://localhost:4280
+          # INVENTORY_API_URL: http://localhost:4281

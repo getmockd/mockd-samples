@@ -1,0 +1,71 @@
+# Todo API — Config File Equivalent of the MCP Workflow
+# Usage: mockd start -c mockd.yaml --no-auth
+#
+# This config creates the exact same API that the MCP workflow builds
+# interactively through tool calls. Use whichever approach fits your workflow:
+#
+#   MCP workflow:  Ask your AI agent "create a todo API" → agent calls tools
+#   Config file:   mockd start -c mockd.yaml
+#
+# Both produce the same 5 endpoints backed by a stateful "todos" table.
+
+version: "1.0"
+
+# ============================================================================
+# Tables — stateful data stores
+# ============================================================================
+tables:
+  - name: todos
+    idField: id
+    seedData:
+      - { id: "1", title: "Buy groceries", completed: false }
+      - { id: "2", title: "Write tests", completed: true }
+
+# ============================================================================
+# Mocks — HTTP endpoints bound to the todos table
+# ============================================================================
+mocks:
+  - type: http
+    http:
+      matcher:
+        method: GET
+        path: /api/todos
+      statefulBinding:
+        table: todos
+        action: list
+
+  - type: http
+    http:
+      matcher:
+        method: POST
+        path: /api/todos
+      statefulBinding:
+        table: todos
+        action: create
+
+  - type: http
+    http:
+      matcher:
+        method: GET
+        path: "/api/todos/{id}"
+      statefulBinding:
+        table: todos
+        action: get
+
+  - type: http
+    http:
+      matcher:
+        method: PUT
+        path: "/api/todos/{id}"
+      statefulBinding:
+        table: todos
+        action: update
+
+  - type: http
+    http:
+      matcher:
+        method: DELETE
+        path: "/api/todos/{id}"
+      statefulBinding:
+        table: todos
+        action: delete

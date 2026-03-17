@@ -1,0 +1,39 @@
+# Microservices Docker Compose — Mock Dependent Services
+#
+# Starts mockd with mock User Service + Payment Service endpoints.
+# Point your service at http://mockd:4280 for both APIs.
+#
+# Usage:
+#   docker compose up           # start mockd
+#   docker compose up -d        # start in background
+#   ./test.sh                   # validate all endpoints
+#   docker compose down         # stop everything
+
+services:
+  mockd:
+    image: ghcr.io/getmockd/mockd:0.6
+    ports:
+      - "4280:4280"
+      - "4290:4290"
+    volumes:
+      - .:/config
+    command: ["start", "-c", "/config/mockd.yaml", "--no-auth"]
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:4290/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # -----------------------------------------------------------------------
+  # Your service goes here. Uncomment and replace with your actual service.
+  # Both USER_SERVICE_URL and PAYMENT_SERVICE_URL point to the same mockd
+  # instance — mockd serves all mocked endpoints on a single port.
+  # -----------------------------------------------------------------------
+  # your-service:
+  #   build: .
+  #   environment:
+  #     USER_SERVICE_URL: http://mockd:4280
+  #     PAYMENT_SERVICE_URL: http://mockd:4280
+  #   depends_on:
+  #     mockd:
+  #       condition: service_healthy

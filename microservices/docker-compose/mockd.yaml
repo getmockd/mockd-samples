@@ -1,0 +1,68 @@
+# Microservices — Mock Dependent Services
+# Usage: mockd start -c mockd.yaml --no-auth
+#
+# Mock two services your app depends on: User Service and Payment Service.
+
+version: "1.0"
+
+tables:
+  - name: users
+    idField: id
+    idStrategy: prefix
+    idPrefix: "usr_"
+    seedData:
+      - { id: "usr_1", name: "Alice Johnson", email: "alice@example.com", plan: "pro" }
+      - { id: "usr_2", name: "Bob Smith", email: "bob@example.com", plan: "free" }
+
+  - name: payments
+    idField: id
+    idStrategy: prefix
+    idPrefix: "pay_"
+    seedData:
+      - { id: "pay_1", userId: "usr_1", amount: 2999, currency: "usd", status: "completed" }
+      - { id: "pay_2", userId: "usr_2", amount: 999, currency: "usd", status: "pending" }
+
+mocks:
+  # User Service
+  - type: http
+    http:
+      matcher: { method: GET, path: /users }
+      statefulBinding: { table: users, action: list }
+  - type: http
+    http:
+      matcher: { method: POST, path: /users }
+      statefulBinding: { table: users, action: create }
+  - type: http
+    http:
+      matcher: { method: GET, path: "/users/{id}" }
+      statefulBinding: { table: users, action: get }
+  - type: http
+    http:
+      matcher: { method: PATCH, path: "/users/{id}" }
+      statefulBinding: { table: users, action: patch }
+  - type: http
+    http:
+      matcher: { method: DELETE, path: "/users/{id}" }
+      statefulBinding: { table: users, action: delete }
+
+  # Payment Service
+  - type: http
+    http:
+      matcher: { method: GET, path: /payments }
+      statefulBinding: { table: payments, action: list }
+  - type: http
+    http:
+      matcher: { method: POST, path: /payments }
+      statefulBinding: { table: payments, action: create }
+  - type: http
+    http:
+      matcher: { method: GET, path: "/payments/{id}" }
+      statefulBinding: { table: payments, action: get }
+  - type: http
+    http:
+      matcher: { method: PATCH, path: "/payments/{id}" }
+      statefulBinding: { table: payments, action: patch }
+  - type: http
+    http:
+      matcher: { method: DELETE, path: "/payments/{id}" }
+      statefulBinding: { table: payments, action: delete }

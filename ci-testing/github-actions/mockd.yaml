@@ -1,0 +1,76 @@
+# Payment Service API — CI Contract Testing Sample
+# Usage: mockd start -c mockd.yaml --no-auth
+
+version: "1.0"
+
+tables:
+  - name: orders
+    idField: id
+    idStrategy: prefix
+    idPrefix: "ord_"
+    seedData:
+      - id: "ord_seed_001"
+        customer_email: "alice@example.com"
+        items:
+          - { sku: "WIDGET-1", name: "Blue Widget", quantity: 2, unit_price: 1500 }
+        total: 3000
+        status: "confirmed"
+      - id: "ord_seed_002"
+        customer_email: "bob@example.com"
+        items:
+          - { sku: "GADGET-7", name: "Red Gadget", quantity: 1, unit_price: 3200 }
+        total: 3200
+        status: "pending"
+
+  - name: payments
+    idField: id
+    idStrategy: prefix
+    idPrefix: "pay_"
+    seedData:
+      - id: "pay_seed_001"
+        order_id: "ord_seed_001"
+        amount: 3000
+        currency: "usd"
+        status: "succeeded"
+      - id: "pay_seed_002"
+        order_id: "ord_seed_002"
+        amount: 3200
+        currency: "usd"
+        status: "pending"
+
+mocks:
+  # Orders
+  - type: http
+    http:
+      matcher: { method: GET, path: /api/orders }
+      statefulBinding: { table: orders, action: list }
+  - type: http
+    http:
+      matcher: { method: POST, path: /api/orders }
+      statefulBinding: { table: orders, action: create }
+  - type: http
+    http:
+      matcher: { method: GET, path: "/api/orders/{id}" }
+      statefulBinding: { table: orders, action: get }
+  - type: http
+    http:
+      matcher: { method: PUT, path: "/api/orders/{id}" }
+      statefulBinding: { table: orders, action: update }
+  - type: http
+    http:
+      matcher: { method: DELETE, path: "/api/orders/{id}" }
+      statefulBinding: { table: orders, action: delete }
+
+  # Payments
+  - type: http
+    http:
+      matcher: { method: GET, path: /api/payments }
+      statefulBinding: { table: payments, action: list }
+  - type: http
+    http:
+      matcher: { method: POST, path: /api/payments }
+      statefulBinding: { table: payments, action: create }
+  - type: http
+    http:
+      matcher: { method: GET, path: "/api/payments/{id}" }
+      statefulBinding: { table: payments, action: get }
