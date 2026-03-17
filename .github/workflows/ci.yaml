@@ -116,13 +116,17 @@ jobs:
         run: |
           CONFIG_DIR=$(dirname ${{ matrix.sample.config }})
           cd "$CONFIG_DIR"
-          nohup mockd start -c mockd.yaml --no-auth --log-level error > /tmp/mockd.log 2>&1 &
+          nohup mockd start -c mockd.yaml --no-auth --log-level warn > /tmp/mockd.log 2>&1 &
           echo $! > /tmp/mockd.pid
-          for i in $(seq 1 60); do
+          for i in $(seq 1 120); do
             curl -sf http://localhost:4290/health > /dev/null 2>&1 && break
             sleep 1
           done
-          curl -sf http://localhost:4290/health
+          if ! curl -sf http://localhost:4290/health; then
+            echo "mockd failed to start. Log:"
+            cat /tmp/mockd.log
+            exit 1
+          fi
           echo ""
           mockd list --json --admin-url http://localhost:4290 | python3 -c "import sys,json; d=json.load(sys.stdin); print(f'Loaded {len(d)} mocks')"
 
