@@ -1,6 +1,8 @@
 # Downloaded OpenAPI specs (setup.sh downloads them fresh)
 *.yaml
 !mockd.yaml
+!.github/**/*.yaml
+!.github/**/*.yml
 
 # OS
 .DS_Store

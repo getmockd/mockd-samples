@@ -1,0 +1,227 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate Samples
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        sample:
+          - name: mcp-workflow
+            config: ai-agents/mcp-workflow/mockd.yaml
+            test: ai-agents/mcp-workflow/test.sh
+          - name: ci-testing
+            config: ci-testing/github-actions/mockd.yaml
+            test: ci-testing/github-actions/test.sh
+          - name: microservices
+            config: microservices/docker-compose/mockd.yaml
+            test: microservices/docker-compose/test.sh
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install mockd
+        run: |
+          gh release download --repo getmockd/mockd --pattern 'mockd-linux-amd64' --dir /tmp/mockd-dl
+          chmod +x /tmp/mockd-dl/mockd-linux-amd64
+          sudo mv /tmp/mockd-dl/mockd-linux-amd64 /usr/local/bin/mockd
+          mockd version
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Validate config loads
+        run: |
+          mockd start -c ${{ matrix.sample.config }} --no-auth -d
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:4290/health > /dev/null 2>&1 && break
+            sleep 1
+          done
+          curl -sf http://localhost:4290/health
+          echo ""
+          mockd list --json | python3 -c "import sys,json; d=json.load(sys.stdin); print(f'Loaded {len(d)} mocks')"
+
+      - name: Run test script
+        run: |
+          MOCKD_BIN=mockd bash ${{ matrix.sample.test }}
+
+      - name: Stop mockd
+        if: always()
+        run: mockd stop 2>/dev/null || true
+
+  validate-digital-twins:
+    name: Validate Digital Twins
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        sample:
+          - name: stripe
+            config: third-party-apis/stripe-api/mockd.yaml
+            port: 4280
+          - name: twilio
+            config: third-party-apis/twilio-api/mockd.yaml
+            port: 4280
+          - name: openai
+            config: third-party-apis/openai-api/mockd.yaml
+            port: 4280
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install mockd
+        run: |
+          gh release download --repo getmockd/mockd --pattern 'mockd-linux-amd64' --dir /tmp/mockd-dl
+          chmod +x /tmp/mockd-dl/mockd-linux-amd64
+          sudo mv /tmp/mockd-dl/mockd-linux-amd64 /usr/local/bin/mockd
+          mockd version
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Start mockd with config
+        run: |
+          mockd start -c ${{ matrix.sample.config }} --no-auth -d
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:4290/health > /dev/null 2>&1 && break
+            sleep 1
+          done
+          curl -sf http://localhost:4290/health
+          echo ""
+          mockd list --json | python3 -c "import sys,json; d=json.load(sys.stdin); print(f'Loaded {len(d)} mocks')"
+
+      - name: Smoke test — Stripe
+        if: matrix.sample.name == 'stripe'
+        run: |
+          BASE=http://localhost:${{ matrix.sample.port }}
+          # Create customer
+          CUS=$(curl -sf -X POST $BASE/v1/customers -d "name=CI&email=ci@test.com")
+          CUS_ID=$(echo "$CUS" | jq -r '.id')
+          echo "Created customer: $CUS_ID"
+          [[ "$CUS_ID" == cus_* ]] || (echo "Missing cus_ prefix" && exit 1)
+          # List
+          curl -sf $BASE/v1/customers | jq -e '.object == "list"' > /dev/null
+          # Delete
+          curl -sf -X DELETE $BASE/v1/customers/$CUS_ID | jq -e '.deleted == true' > /dev/null
+          echo "✓ Stripe CRUD passed"
+
+      - name: Smoke test — Twilio
+        if: matrix.sample.name == 'twilio'
+        run: |
+          BASE=http://localhost:${{ matrix.sample.port }}
+          # Create message
+          MSG=$(curl -sf -X POST $BASE/2010-04-01/Accounts/AC_test/Messages.json \
+            -d "From=%2B15551234567&To=%2B15559876543&Body=CI+test")
+          SID=$(echo "$MSG" | jq -r '.sid')
+          echo "Created message: $SID"
+          [[ "$SID" == SM* ]] || (echo "Missing SM prefix" && exit 1)
+          # List
+          curl -sf $BASE/2010-04-01/Accounts/AC_test/Messages.json | jq -e '.messages | length > 0' > /dev/null
+          echo "✓ Twilio CRUD passed"
+
+      - name: Smoke test — OpenAI
+        if: matrix.sample.name == 'openai'
+        run: |
+          BASE=http://localhost:${{ matrix.sample.port }}
+          # List models (seeded)
+          MODELS=$(curl -sf $BASE/models)
+          COUNT=$(echo "$MODELS" | jq '.data | length')
+          echo "Models: $COUNT"
+          [ "$COUNT" -ge 3 ] || (echo "Expected 3+ seeded models" && exit 1)
+          # Create assistant
+          ASST=$(curl -sf -X POST $BASE/assistants \
+            -H "Content-Type: application/json" \
+            -d '{"name":"CI Bot","model":"gpt-4o"}')
+          ASST_ID=$(echo "$ASST" | jq -r '.id')
+          echo "Created assistant: $ASST_ID"
+          [[ "$ASST_ID" == asst_* ]] || (echo "Missing asst_ prefix" && exit 1)
+          # Delete
+          curl -sf -X DELETE $BASE/assistants/$ASST_ID | jq -e '.deleted == true' > /dev/null
+          echo "✓ OpenAI CRUD passed"
+
+      - name: Stop mockd
+        if: always()
+        run: mockd stop 2>/dev/null || true
+
+  docker:
+    name: Docker Compose
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Start microservices sample
+        working-directory: microservices/docker-compose
+        run: |
+          docker compose up -d
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:4290/health > /dev/null 2>&1 && break
+            sleep 1
+          done
+          curl -sf http://localhost:4290/health
+
+      - name: Verify endpoints
+        run: |
+          # Users
+          curl -sf http://localhost:4280/users | jq -e '.data | length == 2' > /dev/null
+          echo "✓ Users seed data present"
+          USR=$(curl -sf -X POST http://localhost:4280/users \
+            -H "Content-Type: application/json" \
+            -d '{"name":"Docker CI","email":"ci@docker.test"}')
+          echo "Created user: $(echo $USR | jq -r '.id')"
+          # Payments
+          curl -sf http://localhost:4280/payments | jq -e '.data | length == 2' > /dev/null
+          echo "✓ Payments seed data present"
+          echo "✓ Docker Compose validated"
+
+      - name: Tear down
+        if: always()
+        working-directory: microservices/docker-compose
+        run: docker compose down
+
+  mcp-sdk:
+    name: MCP SDK
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install mockd
+        run: |
+          gh release download --repo getmockd/mockd --pattern 'mockd-linux-amd64' --dir /tmp/mockd-dl
+          chmod +x /tmp/mockd-dl/mockd-linux-amd64
+          sudo mv /tmp/mockd-dl/mockd-linux-amd64 /usr/local/bin/mockd
+          mockd version
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install MCP SDK
+        run: pip install mcp httpx
+
+      - name: Start mockd
+        run: |
+          mockd serve --no-auth --log-level error &
+          for i in $(seq 1 15); do
+            curl -sf http://localhost:4290/health > /dev/null 2>&1 && break
+            sleep 1
+          done
+          curl -sf http://localhost:4290/health
+
+      - name: Run MCP SDK test
+        run: |
+          MOCKD_BIN=mockd MOCKD_ADMIN_URL=http://localhost:4290 \
+            python3 ai-agents/mcp-workflow/test_mcp_sdk.py
