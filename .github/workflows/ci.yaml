@@ -128,23 +128,23 @@ jobs:
         run: |
           CONFIG_DIR=$(dirname ${{ matrix.sample.config }})
           cd "$CONFIG_DIR"
-          nohup mockd start -c mockd.yaml --no-auth --log-level error > /tmp/mockd.log 2>&1 &
+          nohup mockd start -c mockd.yaml --no-auth --log-level info > /tmp/mockd.log 2>&1 &
           echo $! > /tmp/mockd.pid
+          # Wait for health + import completion (large specs take 30-60s)
           for i in $(seq 1 120); do
-            curl -sf http://localhost:4290/health > /dev/null 2>&1 && break
+            if curl -sf http://localhost:4290/health > /dev/null 2>&1; then
+              # Health OK — check if mocks loaded (import may still be running)
+              MOCK_COUNT=$(mockd list --json --admin-url http://localhost:4290 2>/dev/null | python3 -c "import sys,json; print(len(json.load(sys.stdin)))" 2>/dev/null || echo "0")
+              [ "$MOCK_COUNT" -gt 0 ] && break
+            fi
             sleep 1
           done
-          if ! curl -sf http://localhost:4290/health; then
-            echo "mockd failed to start. Log:"
-            cat /tmp/mockd.log
-            exit 1
-          fi
-          echo ""
+          curl -sf http://localhost:4290/health || { echo "mockd not healthy"; cat /tmp/mockd.log; exit 1; }
           MOCK_COUNT=$(mockd list --json --admin-url http://localhost:4290 | python3 -c "import sys,json; d=json.load(sys.stdin); print(len(d))")
           echo "Loaded $MOCK_COUNT mocks"
           if [ "$MOCK_COUNT" -eq 0 ]; then
             echo "=== mockd log (0 mocks loaded) ==="
-            cat /tmp/mockd.log | tail -30
+            tail -30 /tmp/mockd.log
             exit 1
           fi
 
