@@ -39,20 +39,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
 
-      - name: Validate config loads
-        run: |
-          mockd start -c ${{ matrix.sample.config }} --no-auth -d
-          for i in $(seq 1 30); do
-            curl -sf http://localhost:4290/health > /dev/null 2>&1 && break
-            sleep 1
-          done
-          curl -sf http://localhost:4290/health
-          echo ""
-          mockd list --json | python3 -c "import sys,json; d=json.load(sys.stdin); print(f'Loaded {len(d)} mocks')"
-
       - name: Run test script
         run: |
-          MOCKD_BIN=mockd bash ${{ matrix.sample.test }}
+          CONFIG_DIR=$(dirname ${{ matrix.sample.config }})
+          cd "$CONFIG_DIR"
+          MOCKD_BIN=mockd bash test.sh
 
       - name: Stop mockd
         if: always()
@@ -102,17 +93,18 @@ jobs:
               echo "Downloaded Twilio spec ($(wc -c < third-party-apis/twilio-api/twilio.json) bytes)"
               ;;
             openai)
-              curl -sf -L -o third-party-apis/openai-api/openai.yaml \
-                "https://raw.githubusercontent.com/openai/openai-openapi/refs/heads/master/openapi.yaml" \
-              || curl -sf -L -o third-party-apis/openai-api/openai.yaml \
-                "https://raw.githubusercontent.com/openai/openai-openapi/main/openapi.yaml"
+              curl -sL -o third-party-apis/openai-api/openai.yaml \
+                "https://app.stainless.com/api/spec/documented/openai/openapi.documented.yml"
               echo "Downloaded OpenAI spec ($(wc -c < third-party-apis/openai-api/openai.yaml) bytes)"
               ;;
           esac
 
       - name: Start mockd with config
         run: |
-          mockd start -c ${{ matrix.sample.config }} --no-auth --log-level error &
+          CONFIG_DIR=$(dirname ${{ matrix.sample.config }})
+          cd "$CONFIG_DIR"
+          mockd start -c mockd.yaml --no-auth --log-level error &
+          cd -
           for i in $(seq 1 60); do
             curl -sf http://localhost:4290/health > /dev/null 2>&1 && break
             sleep 1

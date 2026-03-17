@@ -73,7 +73,10 @@ STATUS=$(echo "$RESPONSE" | tail -1)
 BODY=$(echo "$RESPONSE" | sed '$d')
 assert_status "list users" "200" "$STATUS"
 assert_json_field "seed data present" "$BODY" '.data | length' "2"
-assert_json_field "first user name" "$BODY" '.data[0].name' "Alice Johnson"
+# Verify seed data contains expected names (order not guaranteed)
+echo "$BODY" | jq -e '.data | map(.name) | contains(["Alice Johnson"])' > /dev/null && \
+  green "  PASS  seed data contains Alice Johnson" && PASS=$((PASS + 1)) || \
+  (red "  FAIL  seed data missing Alice Johnson" && FAIL=$((FAIL + 1)))
 
 # Get user by ID
 bold "  GET /users/usr_1 (get)"
@@ -124,7 +127,10 @@ STATUS=$(echo "$RESPONSE" | tail -1)
 BODY=$(echo "$RESPONSE" | sed '$d')
 assert_status "list payments" "200" "$STATUS"
 assert_json_field "seed data present" "$BODY" '.data | length' "2"
-assert_json_field "first payment status" "$BODY" '.data[0].status' "completed"
+# Verify seed data contains expected statuses (order not guaranteed)
+echo "$BODY" | jq -e '.data | map(.status) | contains(["completed"])' > /dev/null && \
+  green "  PASS  seed data contains completed payment" && PASS=$((PASS + 1)) || \
+  (red "  FAIL  seed data missing completed payment" && FAIL=$((FAIL + 1)))
 
 # Get payment by ID
 bold "  GET /payments/pay_1 (get)"
