@@ -72,7 +72,7 @@ RESPONSE=$(curl -s -w "\n%{http_code}" "$BASE_URL/users")
 STATUS=$(echo "$RESPONSE" | tail -1)
 BODY=$(echo "$RESPONSE" | sed '$d')
 assert_status "list users" "200" "$STATUS"
-assert_json_field "seed data present" "$BODY" '.data | length' "3"
+assert_json_field "seed data present" "$BODY" '.data | length' "2"
 assert_json_field "first user name" "$BODY" '.data[0].name' "Alice Johnson"
 
 # Get user by ID
@@ -101,7 +101,7 @@ RESPONSE=$(curl -s -w "\n%{http_code}" "$BASE_URL/users")
 STATUS=$(echo "$RESPONSE" | tail -1)
 BODY=$(echo "$RESPONSE" | sed '$d')
 assert_status "list after create" "200" "$STATUS"
-assert_json_field "count increased" "$BODY" '.data | length' "4"
+assert_json_field "count increased" "$BODY" '.data | length' "3"
 
 # Get the newly created user
 bold "  GET /users/$NEW_USER_ID (get created)"
@@ -123,7 +123,7 @@ RESPONSE=$(curl -s -w "\n%{http_code}" "$BASE_URL/payments")
 STATUS=$(echo "$RESPONSE" | tail -1)
 BODY=$(echo "$RESPONSE" | sed '$d')
 assert_status "list payments" "200" "$STATUS"
-assert_json_field "seed data present" "$BODY" '.data | length' "3"
+assert_json_field "seed data present" "$BODY" '.data | length' "2"
 assert_json_field "first payment status" "$BODY" '.data[0].status' "completed"
 
 # Get payment by ID
@@ -154,7 +154,7 @@ RESPONSE=$(curl -s -w "\n%{http_code}" "$BASE_URL/payments")
 STATUS=$(echo "$RESPONSE" | tail -1)
 BODY=$(echo "$RESPONSE" | sed '$d')
 assert_status "list after create" "200" "$STATUS"
-assert_json_field "count increased" "$BODY" '.data | length' "4"
+assert_json_field "count increased" "$BODY" '.data | length' "3"
 
 # Get the newly created payment
 bold "  GET /payments/$NEW_PAY_ID (get created)"

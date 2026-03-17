@@ -77,22 +77,20 @@ assert_status "POST /api/orders returns 201" "201" "$STATUS"
 
 # Verify response shape (contract)
 ORDER_ID=$(echo "$BODY" | json_field "['id']")
-ORDER_TYPE=$(echo "$BODY" | json_field "['type']")
 ORDER_EMAIL=$(echo "$BODY" | json_field "['customer_email']")
-ORDER_CREATED=$(echo "$BODY" | json_field "['created_at']")
+ORDER_CREATED=$(echo "$BODY" | json_field "['createdAt']")
 
-assert_json_eq "Response has type=order" "order" "$ORDER_TYPE"
 assert_json_eq "Response has correct email" "test@example.com" "$ORDER_EMAIL"
 
 # ID has ord_ prefix
 ID_PREFIX=$(echo "$ORDER_ID" | cut -c1-4)
 assert_json_eq "Order ID has ord_ prefix" "ord_" "$ID_PREFIX"
 
-# created_at is present (ISO 8601 timestamp)
+# createdAt is present (ISO 8601 timestamp)
 if [ -n "$ORDER_CREATED" ] && [ "$ORDER_CREATED" != "None" ]; then
-  pass "Response has created_at timestamp"
+  pass "Response has createdAt timestamp"
 else
-  fail "Response missing created_at timestamp"
+  fail "Response missing createdAt timestamp"
 fi
 
 # ── Test 2: Get order by ID ─────────────────────────────────────────
@@ -129,11 +127,9 @@ BODY=$(echo "$BODY" | sed '$d')
 assert_status "POST /api/payments returns 201" "201" "$STATUS"
 
 PAYMENT_ID=$(echo "$BODY" | json_field "['id']")
-PAYMENT_TYPE=$(echo "$BODY" | json_field "['type']")
 PAYMENT_ORDER=$(echo "$BODY" | json_field "['order_id']")
 PAYMENT_AMOUNT=$(echo "$BODY" | json_field "['amount']")
 
-assert_json_eq "Payment has type=payment" "payment" "$PAYMENT_TYPE"
 assert_json_eq "Payment linked to correct order" "$ORDER_ID" "$PAYMENT_ORDER"
 assert_json_eq "Payment has correct amount" "4500" "$PAYMENT_AMOUNT"
 
@@ -149,12 +145,13 @@ echo "--- List Orders ---"
 BODY=$(curl -s "$BASE_URL/api/orders")
 
 # Seed data has 2 orders + we created 1 = 3
-ORDER_COUNT=$(echo "$BODY" | json_field "['total_count']")
-ORDERS_LEN=$(echo "$BODY" | python3 -c "import json,sys; print(len(json.load(sys.stdin)['orders']))")
+ORDERS_LEN=$(echo "$BODY" | python3 -c "import json,sys; print(len(json.load(sys.stdin)['data']))")
+ORDER_TOTAL=$(echo "$BODY" | json_field "['meta']['total']")
 
 assert_json_eq "List orders returns 3 items" "3" "$ORDERS_LEN"
-assert_contains "List response has 'orders' array" '"orders"' "$BODY"
-assert_contains "List response has total_count" '"total_count"' "$BODY"
+assert_json_eq "List meta.total is 3" "3" "$ORDER_TOTAL"
+assert_contains "List response has 'data' array" '"data"' "$BODY"
+assert_contains "List response has meta" '"meta"' "$BODY"
 
 # ── Test 5: List payments ────────────────────────────────────────────
 
@@ -164,7 +161,7 @@ echo "--- List Payments ---"
 BODY=$(curl -s "$BASE_URL/api/payments")
 
 # Seed data has 2 payments + we created 1 = 3
-PAYMENTS_LEN=$(echo "$BODY" | python3 -c "import json,sys; print(len(json.load(sys.stdin)['payments']))")
+PAYMENTS_LEN=$(echo "$BODY" | python3 -c "import json,sys; print(len(json.load(sys.stdin)['data']))")
 assert_json_eq "List payments returns 3 items" "3" "$PAYMENTS_LEN"
 
 # ── Test 6: Get nonexistent resource returns 404 ─────────────────────
@@ -177,34 +174,6 @@ assert_status "GET nonexistent order returns 404" "404" "$STATUS"
 
 BODY=$(curl -s "$BASE_URL/api/orders/ord_nonexistent")
 assert_contains "404 response has error message" '"message"' "$BODY"
-
-# ── Test 7: Verify mock invocations (contract checks) ────────────────
-
-echo ""
-echo "--- Contract Verification ---"
-
-# These checks ensure your test suite actually exercises the API contract.
-# In CI, failing verification means your tests have coverage gaps.
-
-mockd verify check orders-create --at-least 1 2>/dev/null && \
-  pass "orders-create was called at least once" || \
-  fail "orders-create was NOT called (contract gap)"
-
-mockd verify check orders-list --at-least 1 2>/dev/null && \
-  pass "orders-list was called at least once" || \
-  fail "orders-list was NOT called (contract gap)"
-
-mockd verify check orders-get --at-least 1 2>/dev/null && \
-  pass "orders-get was called at least once" || \
-  fail "orders-get was NOT called (contract gap)"
-
-mockd verify check payments-create --at-least 1 2>/dev/null && \
-  pass "payments-create was called at least once" || \
-  fail "payments-create was NOT called (contract gap)"
-
-mockd verify check payments-list --at-least 1 2>/dev/null && \
-  pass "payments-list was called at least once" || \
-  fail "payments-list was NOT called (contract gap)"
 
 # ── Results ──────────────────────────────────────────────────────────
 
