@@ -128,10 +128,7 @@ jobs:
         run: |
           CONFIG_DIR=$(dirname ${{ matrix.sample.config }})
           cd "$CONFIG_DIR"
-          echo "CWD: $(pwd)"
-          echo "Config: $(ls -la mockd.yaml)"
-          echo "Spec files: $(ls -la *.json *.yaml 2>/dev/null | grep -v mockd.yaml || echo 'none')"
-          nohup mockd start -c mockd.yaml --no-auth --log-level debug > /tmp/mockd.log 2>&1 &
+          nohup mockd start -c mockd.yaml --no-auth --log-level error > /tmp/mockd.log 2>&1 &
           echo $! > /tmp/mockd.pid
           for i in $(seq 1 120); do
             curl -sf http://localhost:4290/health > /dev/null 2>&1 && break
