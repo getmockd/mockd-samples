@@ -135,7 +135,7 @@ async def main():
             # 4. Verify with HTTP requests
             print("\n--- Verify CRUD via HTTP ---")
             # Use the port from status, not hardcoded
-            mock_port = 7280  # matches our running server
+            mock_port = 4280  # default
             for p in status.get("ports", []):
                 if p.get("component") == "Mock Engine":
                     mock_port = p["port"]
