@@ -173,7 +173,7 @@ STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$BASE_URL/api/orders/ord_nonexi
 assert_status "GET nonexistent order returns 404" "404" "$STATUS"
 
 BODY=$(curl -s "$BASE_URL/api/orders/ord_nonexistent")
-assert_contains "404 response has error message" '"message"' "$BODY"
+assert_contains "404 response has error field" '"error"' "$BODY"
 
 # ── Results ──────────────────────────────────────────────────────────
 

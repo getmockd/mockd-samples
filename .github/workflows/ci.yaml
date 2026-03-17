@@ -103,21 +103,23 @@ jobs:
               ;;
             openai)
               curl -sf -L -o third-party-apis/openai-api/openai.yaml \
-                "https://raw.githubusercontent.com/openai/openai-openapi/master/openapi.yaml"
+                "https://raw.githubusercontent.com/openai/openai-openapi/refs/heads/master/openapi.yaml" \
+              || curl -sf -L -o third-party-apis/openai-api/openai.yaml \
+                "https://raw.githubusercontent.com/openai/openai-openapi/main/openapi.yaml"
               echo "Downloaded OpenAI spec ($(wc -c < third-party-apis/openai-api/openai.yaml) bytes)"
               ;;
           esac
 
       - name: Start mockd with config
         run: |
-          mockd start -c ${{ matrix.sample.config }} --no-auth -d
-          for i in $(seq 1 30); do
+          mockd start -c ${{ matrix.sample.config }} --no-auth --log-level error &
+          for i in $(seq 1 60); do
             curl -sf http://localhost:4290/health > /dev/null 2>&1 && break
             sleep 1
           done
           curl -sf http://localhost:4290/health
           echo ""
-          mockd list --json | python3 -c "import sys,json; d=json.load(sys.stdin); print(f'Loaded {len(d)} mocks')"
+          mockd list --json --admin-url http://localhost:4290 | python3 -c "import sys,json; d=json.load(sys.stdin); print(f'Loaded {len(d)} mocks')"
 
       - name: Smoke test — Stripe
         if: matrix.sample.name == 'stripe'
