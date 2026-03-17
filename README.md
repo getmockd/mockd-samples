@@ -4,11 +4,21 @@ Real-world examples of [mockd](https://github.com/getmockd/mockd)'s digital twin
 
 ## Available Samples
 
+### Digital Twins (Third-Party APIs)
+
 | Sample | Description | Stateful | Endpoints | SDK Tested |
 |--------|-------------|----------|-----------|------------|
 | [Stripe API](third-party-apis/stripe-api/) | Full Stripe payment API digital twin | 9 tables, 46 bindings, 8 custom ops | 587 | stripe-go 49/49 |
 | [Twilio API](third-party-apis/twilio-api/) | Twilio REST API v2010 digital twin | 7 tables, 32 bindings | 197 | twilio-go 13/13 |
-| [OpenAI API](third-party-apis/openai-api/) | OpenAI API mock from official spec | — | 237 | — |
+| [OpenAI API](third-party-apis/openai-api/) | OpenAI API with stateful models + assistants | 3 tables, 11 bindings | 237 | openai Python SDK |
+
+### Use Case Samples
+
+| Sample | Description | What it shows |
+|--------|-------------|---------------|
+| [MCP Workflow](ai-agents/mcp-workflow/) | Build a Todo API with AI tool calls | Create mocks via MCP — zero CLI commands |
+| [GitHub Actions](ci-testing/github-actions/) | Contract testing in CI | `setup-mockd` action + `mockd verify` |
+| [Docker Compose](microservices/docker-compose/) | Mock dependent microservices | User + Payment service mocks for local dev |
 
 ## Quick Start
 
