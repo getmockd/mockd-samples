@@ -43,14 +43,12 @@ jobs:
         run: |
           CONFIG_DIR=$(dirname ${{ matrix.sample.config }})
           cd "$CONFIG_DIR"
-          nohup mockd start -c mockd.yaml --no-auth --log-level error > /tmp/mockd.log 2>&1 &
-          echo $! > /tmp/mockd.pid
+          mockd start -c mockd.yaml --no-auth -d
           for i in $(seq 1 30); do
             curl -sf http://localhost:4290/health > /dev/null 2>&1 && break
             sleep 1
           done
           curl -sf http://localhost:4290/health
-          mockd list --json --admin-url http://localhost:4290 | python3 -c "import sys,json; d=json.load(sys.stdin); print(f'Loaded {len(d)} mocks')"
 
       - name: Run test script
         run: |
@@ -60,7 +58,7 @@ jobs:
 
       - name: Stop mockd
         if: always()
-        run: pkill -f mockd || true
+        run: mockd stop 2>/dev/null || true
 
   validate-digital-twins:
     name: Validate Digital Twins
@@ -128,25 +126,22 @@ jobs:
         run: |
           CONFIG_DIR=$(dirname ${{ matrix.sample.config }})
           cd "$CONFIG_DIR"
-          nohup mockd start -c mockd.yaml --no-auth --log-level info > /tmp/mockd.log 2>&1 &
-          echo $! > /tmp/mockd.pid
-          # Wait for health + import completion (large specs take 30-60s)
+          mockd start -c mockd.yaml --no-auth -d
+          # Wait for health + import completion (large specs take 30-60s on CI)
           for i in $(seq 1 120); do
             if curl -sf http://localhost:4290/health > /dev/null 2>&1; then
-              # Health OK — check if mocks loaded (import may still be running)
-              MOCK_COUNT=$(mockd list --json --admin-url http://localhost:4290 2>/dev/null | python3 -c "import sys,json; print(len(json.load(sys.stdin)))" 2>/dev/null || echo "0")
-              [ "$MOCK_COUNT" -gt 0 ] && break
+              MOCK_COUNT=$(mockd list --json 2>/dev/null | python3 -c "import sys,json; print(len(json.load(sys.stdin)))" 2>/dev/null || echo "0")
+              [ "$MOCK_COUNT" -gt 10 ] && break
             fi
             sleep 1
           done
-          curl -sf http://localhost:4290/health || { echo "mockd not healthy"; cat /tmp/mockd.log; exit 1; }
-          MOCK_COUNT=$(mockd list --json --admin-url http://localhost:4290 | python3 -c "import sys,json; d=json.load(sys.stdin); print(len(d))")
-          echo "Loaded $MOCK_COUNT mocks"
-          if [ "$MOCK_COUNT" -eq 0 ]; then
-            echo "=== mockd log (0 mocks loaded) ==="
-            tail -30 /tmp/mockd.log
+          if ! curl -sf http://localhost:4290/health; then
+            echo "mockd not healthy"
+            cat ~/.mockd/daemon.log 2>/dev/null
             exit 1
           fi
+          MOCK_COUNT=$(mockd list --json | python3 -c "import sys,json; d=json.load(sys.stdin); print(len(d))")
+          echo "Loaded $MOCK_COUNT mocks"
 
       - name: Smoke test — Stripe
         if: matrix.sample.name == 'stripe'
